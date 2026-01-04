@@ -7,9 +7,19 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.chains.summarize import load_summarize_chain
 from langchain_core.runnables import RunnableConfig
+from langchain_core.prompts import PromptTemplate
 
 load_dotenv(override=True)
-llm = ChatOpenAI(temperature=0, model="gpt-4o")
+llm = ChatOpenAI(temperature=0, model="gpt-4o-mini")
+
+# Define your custom instruction
+prompt_template = """Write a detailed summary of the following audio transcript. 
+Focus on the main arguments and provide the result in bullet points:
+"{text}"
+SUMMARY:"""
+
+# Create the Prompt object
+Summary_Prompt = PromptTemplate(template=prompt_template, input_variables=["text"])
 
 async def process_audio(audio_filename):
     device = Accelerator().device
@@ -33,11 +43,11 @@ async def process_audio(audio_filename):
     # --- Step 3: Adaptive Summarization ---
     if len(docs) == 1:
         # Use 'stuff' for short text (Faster & Cheaper)
-        chain = load_summarize_chain(llm, chain_type="stuff")
+        chain = load_summarize_chain(llm, chain_type="stuff", prompt_template=Summary_Prompt)
         result = await chain.ainvoke(docs)
     else:
         # Use 'map_reduce' for long text (Parallel & Scalable)
-        chain = load_summarize_chain(llm, chain_type="map_reduce")
+        chain = load_summarize_chain(llm, chain_type="map_reduce", prompt_template=Summary_Prompt)
         # Create a proper config object instead of a dict
         config = RunnableConfig(max_concurrency=5)
         result = await chain.ainvoke(
@@ -46,8 +56,6 @@ async def process_audio(audio_filename):
         )
 
     summary = result["output_text"]
-    print(summary)
-
     # Return summary for UI and full_text for the hidden State (Q&A)
     return summary
 
