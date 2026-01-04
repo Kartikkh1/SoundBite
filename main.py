@@ -1,10 +1,12 @@
+import os
+import tempfile
+import uuid
+import asyncio
 from accelerate import Accelerator
 from transformers import pipeline
 import gradio as gr
 import yt_dlp
 from dotenv import load_dotenv
-import os
-import tempfile
 from langchain_openai import ChatOpenAI
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -15,72 +17,71 @@ from langchain_core.prompts import PromptTemplate
 load_dotenv(override=True)
 llm = ChatOpenAI(temperature=0, model="gpt-4o-mini")
 
-# Define your custom instruction
+# Custom instruction for the LLM
 prompt_template = """Write a detailed summary of the following audio transcript. 
 Focus on the main arguments and provide the result in bullet points:
 "{text}"
 SUMMARY:"""
 
-# Create the Prompt object
 summary_prompt = PromptTemplate(template=prompt_template, input_variables=["text"])
 
 
+class VideoTooLongError(Exception):
+    """Custom exception for videos exceeding the maximum allowed length."""
+    pass
+
+def length_filter(info_dict, *, incomplete):
+    duration = info_dict.get('duration')
+    if duration and duration > 1200: # 1200 seconds = 20 minutes
+        raise VideoTooLongError('Video is too long (max 20 minutes)')
+    return None
+
 async def extract_audio_from_url(url):
-    # Use a directory for temp files so we don't have naming conflicts
     temp_dir = tempfile.gettempdir()
-    # We use a placeholder for the extension because yt-dlp handles it
-    audio_base_path = os.path.join(temp_dir, "input_audio")
+    # Generate a unique filename to avoid conflicts
+    unique_id = str(uuid.uuid4())[:8]
+    audio_base_path = os.path.join(temp_dir, f"audio_{unique_id}")
     
     ydl_opts = {
-        # 'bestaudio' is often webm or m4a; FFmpeg will convert this to wav
         'format': 'bestaudio/best',
         'outtmpl': f'{audio_base_path}.%(ext)s', 
         'noplaylist': True,
+        'max_filesize': 30 * 1024 * 1024, # 30 MB limit
+        'match_filter': length_filter,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'wav',
             'preferredquality': '192',
         }],
-        # Point to the directory containing ffmpeg AND ffprobe
+        # Ensure these are installed: brew install ffmpeg
         'ffmpeg_location': '/opt/homebrew/bin', 
-        'quiet': False, # Set to False to see the actual logs if it fails
-        'verbose': True
+        'quiet': False,
     }
     
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # extract_info is often more reliable for catching errors early
-            info = ydl.extract_info(url, download=True)
-            # The post-processor changes the extension to .wav
-            final_filename = f"{audio_base_path}.wav"
-            
-        return final_filename
+        # Run yt-dlp in a thread to prevent blocking the async loop
+        def download():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            return f"{audio_base_path}.wav"
+        
+        return True, await asyncio.to_thread(download)
+    except VideoTooLongError as e:
+        return False, f"### ❌ Error: Video is too long, maximum allowed length is 20 minutes."
     except Exception as e:
-        print(f"Error downloading audio: {e}")
-        return None
-
-# Test the function
-# result = await extract_audio_from_url("https://www.youtube.com/watch?v=i0Oduk7Lc60")
-
-async def process_url_and_audio(audio_filename, url_input):
-    if url_input:
-        audio_filename = await extract_audio_from_url(url_input)
-        if not audio_filename:
-            return "Error: Could not extract audio from URL."
-
-    if not audio_filename:
-        return "Error: No audio provided. Please upload a file or enter a URL."
-    
-    try:
-        summary = await process_audio(audio_filename)
-        return summary
-    finally:
-        if url_input and audio_filename and os.path.exists(audio_filename):
-            os.remove(audio_filename)
+        error_msg = str(e)
+        if "File is larger than max-filesize" in error_msg:
+            return False, "### ❌ Error: User attempted to download a file exceeding 30MB."
+        else:
+            print(f"Error downloading audio: {e}")
+            return False, "### ❌ Error: Something went wrong during download, please try again later."
 
 
 async def process_audio(audio_filename):
     device = Accelerator().device
+    
+    # --- Step 1: Transcription ---
+    yield "### ⏳ Status: Transcribing..."
     pipe = pipeline(
         "automatic-speech-recognition",
         model="openai/whisper-small",
@@ -89,86 +90,93 @@ async def process_audio(audio_filename):
         return_timestamps=True
     )
 
-    result = pipe(audio_filename)
+    # Run heavy inference in a thread
+    result = await asyncio.to_thread(pipe, audio_filename)
     transcription = result["text"]
 
     # --- Step 2: LangChain Chunking ---
-    # We use the recursive splitter to keep sentences intact
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=100)
+    yield "### ⏳ Status: Summarizing..."
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     texts = text_splitter.split_text(transcription)
     docs = [Document(page_content=t) for t in texts]
 
-    # --- Step 3: Adaptive Summarization ---
+    # --- Step 3: Summarization ---
+    yield "### ⏳ Status: Generating AI summary..."
     if len(docs) == 1:
-        # Use 'stuff' for short text (Faster & Cheaper)
         chain = load_summarize_chain(llm, chain_type="stuff", prompt=summary_prompt)
-        result = await chain.ainvoke(docs)
+        res = await chain.ainvoke(docs)
     else:
-        # Use 'map_reduce' for long text (Parallel & Scalable)
-        chain = load_summarize_chain(llm, chain_type="map_reduce", map_prompt=summary_prompt, combine_prompt=summary_prompt)
-        # Create a proper config object instead of a dict
-        config = RunnableConfig(max_concurrency=5)
-        result = await chain.ainvoke(
-            docs,
-            config=config
+        chain = load_summarize_chain(
+            llm, 
+            chain_type="map_reduce", 
+            map_prompt=summary_prompt, 
+            combine_prompt=summary_prompt
         )
+        res = await chain.ainvoke(docs, config=RunnableConfig(max_concurrency=5))
 
-    summary = result["output_text"]
-    # Return summary for UI and full_text for the hidden State (Q&A)
-    return summary
+    yield f"## ✅ Summary\n\n{res['output_text']}"
+
+async def process_url_and_audio(audio_filename, url_input):
+    yield "### ⏳ Status: Starting..."
+    
+    target_audio = audio_filename
+    
+    if url_input:
+        yield "### ⏳ Status: Downloading audio from URL..."
+        success, result = await extract_audio_from_url(url_input)
+        if not success:
+            yield result # This will be the error message
+            return
+        target_audio = result
+
+    if not target_audio:
+        yield "### ❌ Error\nPlease upload a file or enter a valid URL."
+        return
+
+    try:
+        yield "### ⏳ Status: Transcribing with Whisper (Small)..."
+        async for status_update in process_audio(target_audio):
+            yield status_update
+        return 
+    except Exception as e:
+        yield f"### ❌ Error\nAn error occurred during processing: {str(e)}"
+        return
+    finally:
+        # Cleanup: only delete if it was a downloaded file
+        if url_input and target_audio and os.path.exists(target_audio):
+            os.remove(target_audio)
 
 def main():
-    with gr.Blocks(title="AI Audio Summarizer") as demo:
+    with gr.Blocks(title="AI Audio Summarizer", theme=gr.themes.Soft()) as demo:
         gr.Markdown("# 🎙️ Audio Summary Tool")
-        gr.Markdown("Upload an audio file to get an instant AI-generated summary.")
+        gr.Markdown("Get a bulleted summary from any audio file or YouTube link.")
 
-        # Create a horizontal row
         with gr.Row():
-            # Left Column: Inputs
             with gr.Column(scale=1):
-                audio_input = gr.Audio(
-                    label="Upload Audio",
-                    type="filepath",
-                    sources=["upload", "microphone"]
-                )
-                url_input = gr.Textbox(
-                    label="Or paste a YouTube/Video URL",
-                    placeholder="E.g, https://www.youtube.com/watch?v=123"
-                )
+                audio_input = gr.Audio(label="Upload Audio", type="filepath", sources=["upload", "microphone"])
+                url_input = gr.Textbox(label="YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
                 submit_btn = gr.Button("Generate Summary", variant="primary", interactive=False)
 
-            # Right Column: Outputs
             with gr.Column(scale=1):
-                summary_output = gr.Markdown(
-                    label="The summary will appear here...",
-                    
-                )
+                summary_output = gr.Markdown("The summary will appear here...")
                 clear_btn = gr.ClearButton([audio_input, url_input, summary_output])
 
-        # Connect the button to the function
+        # Logic to enable button only when input exists
+        def set_btn_interactive(audio, url):
+            if audio is not None or (url and url.strip() != ""):
+                return gr.update(interactive=True)
+            return gr.update(interactive=False)
+
+        audio_input.change(set_btn_interactive, [audio_input, url_input], submit_btn)
+        url_input.change(set_btn_interactive, [audio_input, url_input], submit_btn)
+
         submit_btn.click(
             fn=process_url_and_audio,
             inputs=[audio_input, url_input],
             outputs=summary_output,
-            show_progress="full"
+            show_progress="hidden"
         )
-
-        def set_btn_interactive(audio, url):
-            return gr.update(interactive=True if audio is not None or url else False)
-
-        audio_input.change(
-            fn=set_btn_interactive,
-            inputs=[audio_input, url_input],
-            outputs=submit_btn
-        )
-        url_input.change(
-            fn=set_btn_interactive,
-            inputs=[audio_input, url_input],
-            outputs=submit_btn
-        )
-
-    demo.launch()
-
+    demo.queue().launch(debug=True)
 
 if __name__ == "__main__":
     main()
