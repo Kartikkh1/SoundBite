@@ -74,8 +74,6 @@ async def extract_audio_from_url(url):
             'preferredcodec': 'wav',
             'preferredquality': '192',
         }],
-        # Ensure these are installed: brew install ffmpeg
-        'ffmpeg_location': '/opt/homebrew/bin', 
         'quiet': False,
     }
     
@@ -211,7 +209,7 @@ def main():
             outputs=[status_output, summary_output, clear_btn, submit_btn],
             show_progress="hidden"
         )
-    demo.queue().launch(debug=True, theme=gr.themes.Soft())
+    demo.queue().launch(debug=True, theme=gr.themes.Soft(), server_name="0.0.0.0", server_port=7860)
 
 if __name__ == "__main__":
     main()

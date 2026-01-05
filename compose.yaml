@@ -1,0 +1,10 @@
+services:
+  server:
+    build:
+      context: .
+    ports:
+      - 7860:7860
+    env_file:
+      - .env
+    volumes:
+      - ./hf_cache:/app/hf_cache
