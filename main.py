@@ -3,7 +3,6 @@ import tempfile
 import uuid
 import asyncio
 import re
-import sndhdr
 from accelerate import Accelerator
 from transformers import pipeline
 import gradio as gr
@@ -154,7 +153,7 @@ async def process_url_and_audio(audio_filename, url_input):
         if not is_valid_url(url_input):
             yield "### ❌ Error: Only YouTube links are supported.", gr.update(), gr.update(interactive=True), gr.update(interactive=True)
             return
-        yield "### ⏳ Status: Downloading audio from URL...", gr.update(), gr.update()
+        yield "### ⏳ Status: Downloading audio from URL...", gr.update(), gr.update(), gr.update()
         success, result = await extract_audio_from_url(url_input)
         if not success:
             yield result, gr.update(), gr.update(interactive=True), gr.update(interactive=True)
@@ -165,19 +164,14 @@ async def process_url_and_audio(audio_filename, url_input):
         yield "### ❌ Error\nPlease upload a file or enter a valid URL.", gr.update(), gr.update(interactive=True), gr.update(interactive=True)
         return
 
-    # Validate file type using sndhdr to ensure it's a legitimate audio file
-    file_type_info = sndhdr.what(target_audio)
-    if not file_type_info or file_type_info.filetype != 'wav':
-        yield "### ❌ Error: Invalid audio file format. Only WAV files are supported.", gr.update(), gr.update(interactive=True), gr.update(interactive=True)
-        return
 
     try:
-        yield "### ⏳ Status: Starting Transcribing...", gr.update(), gr.update()
+        yield "### ⏳ Status: Starting Transcribing...", gr.update(), gr.update(), gr.update()
         async for status_update in process_audio(target_audio):
             if status_update.startswith("## ✅ Summary"):
                 yield "### ✅ Complete!", gr.update(value=status_update), gr.update(interactive=True), gr.update(interactive=True)
             else:
-                yield status_update, gr.update(), gr.update()
+                yield status_update, gr.update(), gr.update(), gr.update()
         return 
     except Exception as e:
         yield f"### ❌ Error\nAn error occurred during processing: {str(e)}", gr.update(), gr.update(interactive=True), gr.update(interactive=True)
@@ -187,7 +181,7 @@ async def process_url_and_audio(audio_filename, url_input):
             os.remove(target_audio)
 
 def main():
-    with gr.Blocks(title="AI Audio Summarizer", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="AI Audio Summarizer") as demo:
         gr.Markdown("# 🎙️ Audio Summary Tool")
         gr.Markdown("Get a bulleted summary from any audio file or YouTube link.")
 
@@ -217,7 +211,7 @@ def main():
             outputs=[status_output, summary_output, clear_btn, submit_btn],
             show_progress="hidden"
         )
-    demo.queue().launch(debug=True)
+    demo.queue().launch(debug=True, theme=gr.themes.Soft())
 
 if __name__ == "__main__":
     main()
