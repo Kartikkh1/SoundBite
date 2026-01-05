@@ -117,7 +117,8 @@ async def process_audio(audio_filename):
     yield f"## ✅ Summary\n\n{res['output_text']}"
 
 async def process_url_and_audio(audio_filename, url_input):
-    yield "### ⏳ Status: Starting...", gr.update(), gr.update(interactive=False)
+    # Disable submit button and clear button at the start
+    yield "### ⏳ Status: Starting...", gr.update(), gr.update(interactive=False), gr.update(interactive=False)
     
     target_audio = audio_filename
     
@@ -125,24 +126,24 @@ async def process_url_and_audio(audio_filename, url_input):
         yield "### ⏳ Status: Downloading audio from URL...", gr.update(), gr.update()
         success, result = await extract_audio_from_url(url_input)
         if not success:
-            yield result, gr.update(), gr.update(interactive=True)
+            yield result, gr.update(), gr.update(interactive=True), gr.update(interactive=True)
             return
         target_audio = result
 
     if not target_audio:
-        yield "### ❌ Error\nPlease upload a file or enter a valid URL.", gr.update(), gr.update(interactive=True)
+        yield "### ❌ Error\nPlease upload a file or enter a valid URL.", gr.update(), gr.update(interactive=True), gr.update(interactive=True)
         return
 
     try:
-        yield "### ⏳ Status: Transcribing with Whisper (Small)...", gr.update(), gr.update()
+        yield "### ⏳ Status: Transcribing...", gr.update(), gr.update()
         async for status_update in process_audio(target_audio):
             if status_update.startswith("## ✅ Summary"):
-                yield "### ✅ Complete!", gr.update(value=status_update), gr.update(interactive=True)
+                yield "### ✅ Complete!", gr.update(value=status_update), gr.update(interactive=True), gr.update(interactive=True)
             else:
                 yield status_update, gr.update(), gr.update()
         return 
     except Exception as e:
-        yield f"### ❌ Error\nAn error occurred during processing: {str(e)}", gr.update(), gr.update(interactive=True)
+        yield f"### ❌ Error\nAn error occurred during processing: {str(e)}", gr.update(), gr.update(interactive=True), gr.update(interactive=True)
         return
     finally:
         if url_input and target_audio and os.path.exists(target_audio):
@@ -176,7 +177,7 @@ def main():
         submit_btn.click(
             fn=process_url_and_audio,
             inputs=[audio_input, url_input],
-            outputs=[status_output, summary_output, clear_btn],
+            outputs=[status_output, summary_output, clear_btn, submit_btn],
             show_progress="hidden"
         )
     demo.queue().launch(debug=True)
