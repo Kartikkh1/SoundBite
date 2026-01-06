@@ -7,7 +7,7 @@ services:
     env_file:
       - .env
     volumes:
-      - - ~/.cache/huggingface:/app/hf_cache
+      - ~/.cache/huggingface:/app/hf_cache
     deploy:
       resources:
         limits:
