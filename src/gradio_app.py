@@ -56,14 +56,22 @@ def run_app():
                 summary_output = gr.Markdown(label="The summary will appear here...", elem_id="summary_output")
                 clear_btn = gr.ClearButton([audio_input, url_input, summary_output, status_output], elem_id="clear_btn")
 
-        # Logic to enable button only when input exists
-        def set_btn_interactive(audio, url):
-            if audio is not None or (url and url.strip() != ""):
-                return gr.update(interactive=True)
-            return gr.update(interactive=False)
+        def update_inputs_and_button(event_source, audio_path, url_text):
+            submit_interactive = bool(audio_path or (url_text and url_text.strip() != ""))
+            
+            new_audio_update = gr.update()
+            new_url_update = gr.update()
 
-        audio_input.change(set_btn_interactive, [audio_input, url_input], submit_btn)
-        url_input.change(set_btn_interactive, [audio_input, url_input], submit_btn)
+            if event_source == 'audio' and audio_path:
+                new_url_update = gr.update(value="")
+            elif event_source == 'url' and url_text and url_text.strip() != "":
+                new_audio_update = gr.update(value=None)
+            
+            return new_audio_update, new_url_update, gr.update(interactive=submit_interactive)
+
+        audio_input.change(update_inputs_and_button, [gr.State('audio'), audio_input, url_input], [audio_input, url_input, submit_btn])
+        url_input.change(update_inputs_and_button, [gr.State('url'), audio_input, url_input], [audio_input, url_input, submit_btn])
+        clear_btn.click(lambda: ([None, "", gr.update(interactive=False)]), outputs=[audio_input, url_input, submit_btn])
 
         submit_btn.click(
             fn=process_url_and_audio,
