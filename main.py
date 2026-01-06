@@ -4,6 +4,7 @@ import uuid
 import asyncio
 import re
 from accelerate import Accelerator
+import torch
 from transformers import pipeline
 import gradio as gr
 import yt_dlp
@@ -103,17 +104,17 @@ async def extract_audio_from_url(url):
 
 
 async def process_audio(audio_filename):
-    device = Accelerator().device
     
     # --- Step 1: Transcription ---
     yield "### ⏳ Status: Transcribing..."
     pipe = pipeline(
         "automatic-speech-recognition",
         model="openai/whisper-small",
-        device=device,
+        device="cpu", # Change to "cuda" if using GPU,
         chunk_length_s=30,
-        return_timestamps=True
-    )
+        return_timestamps=True,
+        model_kwargs={"dtype": torch.float32}, # Slim images prefer float32 on CPU
+ )
 
     # Run heavy inference in a thread
     result = await asyncio.to_thread(pipe, audio_filename)

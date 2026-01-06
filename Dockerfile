@@ -7,7 +7,6 @@
 
 ARG PYTHON_VERSION=3.12.12
 FROM python:${PYTHON_VERSION}-slim as base
-
 RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
 # Prevents Python from writing pyc files.
@@ -18,6 +17,9 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
+
+# Set environment variable for Hugging Face cache to use the mounted volume
+ENV HF_HOME=/app/hf_cache
 
 # Download dependencies as a separate step to take advantage of Docker's caching.
 # Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.

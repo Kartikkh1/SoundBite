@@ -10,3 +10,4 @@ wheels/
 .idea/
 # Virtual environments
 .venv
+hf_cache/
