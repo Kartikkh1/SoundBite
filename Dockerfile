@@ -7,7 +7,7 @@
 
 ARG PYTHON_VERSION=3.12.12
 FROM python:${PYTHON_VERSION}-slim as base
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ffmpeg nodejs && rm -rf /var/lib/apt/lists/*
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1

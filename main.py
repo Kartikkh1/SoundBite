@@ -70,6 +70,7 @@ async def extract_audio_from_url(url):
         'noplaylist': True,
         'max_filesize': 30 * 1024 * 1024, # 30 MB limit
         'match_filter': length_filter,
+        'no_warnings': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'wav',
